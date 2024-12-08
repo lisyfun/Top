@@ -1,0 +1,20 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <key>NSAppleEventsUsageDescription</key>
+    <string>Top 需要此权限来管理窗口置顶状态。</string>
+    <key>Privacy - Accessibility Usage Description</key>
+    <string>Top 需要辅助功能权限来管理窗口置顶状态。</string>
+    <key>NSAccessibilityUsageDescription</key>
+    <string>Top 需要辅助功能权限来管理窗口置顶状态。</string>
+    <key>CFBundleIdentifier</key>
+    <string>com.lisongyu.Top</string>
+    <key>CFBundleName</key>
+    <string>Top</string>
+    <key>LSMinimumSystemVersion</key>
+    <string>$(MACOSX_DEPLOYMENT_TARGET)</string>
+    <key>LSUIElement</key>
+    <true/>
+</dict>
+</plist>
