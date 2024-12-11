@@ -3,6 +3,7 @@ import SwiftUI
 import AppKit
 import ScreenCaptureKit
 import CoreGraphics
+import ServiceManagement
 
 // 添加私有 API 声明
 typealias CGSConnection = UInt32
@@ -78,12 +79,19 @@ final class TopApp: NSObject, ObservableObject {
     private var windowMonitors: [WindowIdentifier: Timer] = [:]
     // 存储窗口列表属性
     @Published var windowList: [WindowInfo] = []
+    // 存储开机自启动状态
+    @Published var launchAtStartup: Bool = false {
+        didSet {
+            setLaunchAtStartup(launchAtStartup)
+        }
+    }
     
     override init() {
         super.init()
         if checkAccessibilityPermission(){
             setupWorkspaceNotifications()
             updateRunningApps()
+            checkLaunchAtStartup()
             print("初始化 TopApp")
         }
         
@@ -696,6 +704,57 @@ final class TopApp: NSObject, ObservableObject {
         }
         cleanup()
     }
+    
+    private func checkLaunchAtStartup() {
+        if #available(macOS 13.0, *) {
+            do {
+                launchAtStartup = try SMAppService.mainApp.status == .enabled
+            } catch {
+                print("Failed to check launch at startup status: \(error)")
+                launchAtStartup = false
+            }
+        } else {
+            let bundleURL = Bundle.main.bundleURL
+            let appleEventManager = NSAppleEventManager.shared()
+            let runningApps = NSWorkspace.shared.runningApplications
+            
+            for app in runningApps {
+                if app.bundleURL == bundleURL {
+                    launchAtStartup = app.isTerminated == false
+                    return
+                }
+            }
+            launchAtStartup = false
+        }
+    }
+    
+    private func setLaunchAtStartup(_ enable: Bool) {
+        if #available(macOS 13.0, *) {
+            do {
+                if enable {
+                    if SMAppService.mainApp.status == .enabled {
+                        try SMAppService.mainApp.unregister()
+                    }
+                    try SMAppService.mainApp.register()
+                } else {
+                    try SMAppService.mainApp.unregister()
+                }
+            } catch {
+                print("Failed to set launch at startup: \(error)")
+            }
+        } else {
+            let bundleURL = Bundle.main.bundleURL
+            let config = NSWorkspace.OpenConfiguration()
+            config.activates = false
+            if enable {
+                NSWorkspace.shared.openApplication(at: bundleURL, configuration: config) { _, error in
+                    if let error = error {
+                        print("Failed to enable launch at startup: \(error)")
+                    }
+                }
+            }
+        }
+    }
 }
 
 extension TopApp: SCStreamDelegate {
@@ -886,41 +945,6 @@ struct MenuBarView: View {
     @State private var hasAccessibilityPermission: Bool = false
     @State private var hasScreenRecordingPermission: Bool = false
     
-    // 修改为2列布局
-    private let columns = [
-        GridItem(.flexible(), spacing: 16),
-        GridItem(.flexible(), spacing: 16)
-    ]
-    
-    // 计算窗口高度
-    private func calculateHeight() -> CGFloat {
-        if !hasAccessibilityPermission || !hasScreenRecordingPermission {
-            return 280 // 权限要求视图的高度
-        }
-        
-        if topApp.windowList.isEmpty {
-            return 200 // 空状态视图的高度
-        }
-        
-        // 计算网格行数
-        let itemsCount = topApp.windowList.count
-        let columnsCount = 2 // 两列布局
-        let rowsCount = Int(ceil(Double(itemsCount) / Double(columnsCount)))
-        
-        // 计算内容高度
-        let itemHeight: CGFloat = 100 // 每个网格项的高度
-        let spacing: CGFloat = 16 // 网格间距
-        let verticalPadding: CGFloat = 16 * 2 // 上下内边距
-        let bottomBarHeight: CGFloat = 40 // 底部按钮区域高度
-        
-        // 计算总高度
-        let contentHeight = CGFloat(rowsCount) * itemHeight + CGFloat(max(0, rowsCount - 1)) * spacing + verticalPadding + bottomBarHeight
-        
-        // 限制最大高度
-        let maxHeight: CGFloat = 600
-        return min(contentHeight, maxHeight)
-    }
-    
     var body: some View {
         VStack(spacing: 0) {
             if !hasAccessibilityPermission || !hasScreenRecordingPermission {
@@ -929,71 +953,82 @@ struct MenuBarView: View {
                     hasScreenRecordingPermission: hasScreenRecordingPermission
                 )
             } else {
-                if topApp.windowList.isEmpty {
-                    VStack(spacing: 10) {
-                        Image(systemName: "app.dashed")
-                            .font(.system(size: 24))
-                            .foregroundColor(.gray)
-                        Text("没有运行中的窗口")
-                            .font(.system(size: 12))
-                            .foregroundColor(.secondary)
-                    }
-                    .frame(maxWidth: .infinity, maxHeight: .infinity)
-                    .padding()
-                } else {
-                    ScrollView(showsIndicators: false) { // 隐藏滚动条
-                        LazyVGrid(columns: columns, spacing: 16) {
-                            ForEach(topApp.windowList) { window in
-                                WindowGridItem(
-                                    window: window,
-                                    isPinned: topApp.pinnedWindows.contains(window.id)
-                                ) {
-                                    if let windowInfo = CGWindowListCopyWindowInfo([.optionOnScreenOnly], kCGNullWindowID) as? [[CFString: Any]],
-                                       let info = windowInfo.first(where: { ($0[kCGWindowNumber as CFString] as? CGWindowID) == window.id.windowID }) {
-                                        // 直接使用 window.id 来切换置顶状态
-                                        if topApp.pinnedWindows.contains(window.id) {
-                                            topApp.unpinWindow(identifier: window.id)
-                                        } else {
-                                            topApp.pinWindow(windowInfo: info, identifier: window.id)
+                VStack {
+                    Toggle("开机自启动", isOn: $topApp.launchAtStartup)
+                        .padding(.horizontal)
+                        .padding(.top, 8)
+                    
+                    Divider()
+                        .padding(.vertical, 4)
+                    
+                    if topApp.windowList.isEmpty {
+                        VStack(spacing: 10) {
+                            Image(systemName: "app.dashed")
+                                .font(.system(size: 24))
+                                .foregroundColor(.gray)
+                            Text("没有运行中的窗口")
+                                .font(.system(size: 12))
+                                .foregroundColor(.secondary)
+                        }
+                        .frame(maxWidth: .infinity, maxHeight: .infinity)
+                        .padding()
+                    } else {
+                        ScrollView(showsIndicators: false) { // 隐藏滚动条
+                            LazyVGrid(columns: [
+                                GridItem(.flexible(), spacing: 16),
+                                GridItem(.flexible(), spacing: 16)
+                            ], spacing: 16) {
+                                ForEach(topApp.windowList) { window in
+                                    WindowGridItem(
+                                        window: window,
+                                        isPinned: topApp.pinnedWindows.contains(window.id)
+                                    ) {
+                                        if let windowInfo = CGWindowListCopyWindowInfo([.optionOnScreenOnly], kCGNullWindowID) as? [[CFString: Any]],
+                                           let info = windowInfo.first(where: { ($0[kCGWindowNumber as CFString] as? CGWindowID) == window.id.windowID }) {
+                                            // 直接使用 window.id 来切换置顶状态
+                                            if topApp.pinnedWindows.contains(window.id) {
+                                                topApp.unpinWindow(identifier: window.id)
+                                            } else {
+                                                topApp.pinWindow(windowInfo: info, identifier: window.id)
+                                            }
+                                            // 更新 UI
+                                            topApp.objectWillChange.send()
                                         }
-                                        // 更新 UI
-                                        topApp.objectWillChange.send()
                                     }
                                 }
                             }
+                            .padding(16)
                         }
-                        .padding(16)
                     }
+                    
+                    Divider()
+                    
+                    HStack {
+                        Button("权限设置") {
+                            if let url = URL(string: "x-apple.systempreferences:com.apple.preference.security?Privacy_Accessibility") {
+                                NSWorkspace.shared.open(url)
+                            }
+                        }
+                        .buttonStyle(PlainButtonStyle())
+                        .foregroundColor(hasAccessibilityPermission && hasScreenRecordingPermission ? .green : .red)
+                        
+                        Spacer()
+                        
+                        Button("退出") {
+                            NSApplication.shared.terminate(nil)
+                        }
+                        .buttonStyle(PlainButtonStyle())
+                    }
+                    .padding(.vertical, 6)
+                    .padding(.horizontal, 12)
+                    .frame(maxWidth: .infinity)
+                    .background(Color(NSColor.controlBackgroundColor))
+                    .cornerRadius(4)
+                    .padding(8)
                 }
             }
-            
-            Divider()
-            
-            // 修改底部按钮区域
-            HStack {
-                Button("权限设置") {
-                    if let url = URL(string: "x-apple.systempreferences:com.apple.preference.security?Privacy_Accessibility") {
-                        NSWorkspace.shared.open(url)
-                    }
-                }
-                .buttonStyle(PlainButtonStyle())
-                .foregroundColor(hasAccessibilityPermission && hasScreenRecordingPermission ? .green : .red)
-                
-                Spacer()
-                
-                Button("退出") {
-                    NSApplication.shared.terminate(nil)
-                }
-                .buttonStyle(PlainButtonStyle())
-            }
-            .padding(.vertical, 6)
-            .padding(.horizontal, 12)
-            .frame(maxWidth: .infinity)
-            .background(Color(NSColor.controlBackgroundColor))
-            .cornerRadius(4)
-            .padding(8)
         }
-        .frame(width: 280, height: calculateHeight()) // 使用计算的高度
+        .frame(width: 280, height: 400) // 使用固定高度
         .background(Color(NSColor.windowBackgroundColor))
         .onAppear {
             checkPermissions()
