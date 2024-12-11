@@ -707,15 +707,10 @@ final class TopApp: NSObject, ObservableObject {
     
     private func checkLaunchAtStartup() {
         if #available(macOS 13.0, *) {
-            do {
-                launchAtStartup = try SMAppService.mainApp.status == .enabled
-            } catch {
-                print("Failed to check launch at startup status: \(error)")
-                launchAtStartup = false
-            }
+            let status = SMAppService.mainApp.status
+            launchAtStartup = status == .enabled
         } else {
             let bundleURL = Bundle.main.bundleURL
-            let appleEventManager = NSAppleEventManager.shared()
             let runningApps = NSWorkspace.shared.runningApplications
             
             for app in runningApps {
@@ -732,9 +727,6 @@ final class TopApp: NSObject, ObservableObject {
         if #available(macOS 13.0, *) {
             do {
                 if enable {
-                    if SMAppService.mainApp.status == .enabled {
-                        try SMAppService.mainApp.unregister()
-                    }
                     try SMAppService.mainApp.register()
                 } else {
                     try SMAppService.mainApp.unregister()
